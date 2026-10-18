@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgis/postgis:15-3.3
+    container_name: cab_db
+    environment:
+      POSTGRES_USER: cab_user
+      POSTGRES_PASSWORD: cab_password
+      POSTGRES_DB: cab_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: cab_redis
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: ./backend
+    container_name: cab_backend
+    command: uvicorn app.main:socket_app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://cab_user:cab_password@db:5432/cab_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_placeholder}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET:-whsec_placeholder}
+      - GOOGLE_MAPS_API_KEY=${GOOGLE_MAPS_API_KEY:-google_key_placeholder}
+      - CLERK_PEM_PUBLIC_KEY=${CLERK_PEM_PUBLIC_KEY:-}
+    depends_on:
+      - db
+      - redis
+
+  celery_worker:
+    build: ./backend
+    container_name: cab_worker
+    command: celery -A app.celery_worker.celery worker --loglevel=info
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://cab_user:cab_password@db:5432/cab_db
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-sk_test_placeholder}
+    depends_on:
+      - db
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: cab_frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NEXT_PUBLIC_SOCKET_URL=http://localhost:8000
+    depends_on:
+      - backend
+
+volumes:
+  pgdata:
